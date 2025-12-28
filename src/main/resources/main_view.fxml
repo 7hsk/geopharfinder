@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.web.WebView?>
+<?import javafx.scene.image.ImageView?>
+
+<BorderPane xmlns="http://javafx.com/javafx" 
+            xmlns:fx="http://javafx.com/fxml" 
+            fx:controller="com.pharmalocator.controllers.MainViewController" 
+            stylesheets="@styles.css" 
+            style="-fx-background-color: #f5f5f5;">
+
+    <!-- ============================================================
+         ENHANCED HEADER BAR (with logo, title, and integrated search)
+         ============================================================ -->
+    <top>
+        <HBox alignment="CENTER_LEFT" spacing="20" styleClass="header-bar">
+            <padding>
+                <Insets top="15" right="20" bottom="15" left="20"/>
+            </padding>
+            
+            <!-- Left: Logo and Branding -->
+            <HBox alignment="CENTER_LEFT" spacing="15">
+                <!-- Logo Image -->
+                <ImageView fx:id="logoImageView"
+                           fitHeight="48"
+                           fitWidth="48"
+                           preserveRatio="true"
+                           style="-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 8, 0, 0, 2);"/>
+
+                <!-- App Branding -->
+                <VBox spacing="2">
+                    <Label text="GeoPharFinder"
+                           styleClass="app-title-main"
+                           style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: white; -fx-font-family: 'Segoe UI', 'Arial', sans-serif;"/>
+                    <Label text="Find Nearby Pharmacies Instantly"
+                           styleClass="app-subtitle"
+                           style="-fx-font-size: 11px; -fx-text-fill: rgba(255,255,255,0.9); -fx-font-family: 'Segoe UI', 'Arial', sans-serif;"/>
+                </VBox>
+            </HBox>
+
+            <!-- Center: Search Bar (Expanded) -->
+            <HBox spacing="10" alignment="CENTER_LEFT" HBox.hgrow="ALWAYS"
+                  styleClass="header-search-container"
+                  style="-fx-background-radius: 8px; -fx-padding: 8 15; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 10, 0, 0, 2);">
+
+                <!-- Search Field -->
+                <TextField fx:id="searchField"
+                           promptText="Search for pharmacies, cities, addresses..."
+                           HBox.hgrow="ALWAYS"
+                           styleClass="header-search-field"
+                           style="-fx-background-color: transparent; -fx-border-width: 0; -fx-font-size: 14px; -fx-pref-height: 35px;"/>
+
+                <!-- Search Button -->
+                <Button text="🔍"
+                        onAction="#handleSearch"
+                        styleClass="header-icon-button"
+                        minWidth="40"
+                        minHeight="40">
+                    <tooltip>
+                        <Tooltip text="Search"/>
+                    </tooltip>
+                </Button>
+
+                <!-- Center on User Location Button (Circle with Blue Dot) -->
+                <Button text="⦿"
+                        onAction="#handleCenterOnUser"
+                        styleClass="header-icon-button-circle"
+                        minWidth="40"
+                        minHeight="40"
+                        style="-fx-background-color: #1565c0; -fx-background-radius: 20px; -fx-text-fill: white; -fx-font-size: 20px; -fx-cursor: hand;">
+                    <tooltip>
+                        <Tooltip text="Center on my location"/>
+                    </tooltip>
+                </Button>
+            </HBox>
+
+            <!-- Right: Action Buttons -->
+            <HBox spacing="8" alignment="CENTER_RIGHT">
+                <Button text="📍"
+                        onAction="#handleLocate"
+                        styleClass="header-action-button"
+                        minWidth="45"
+                        minHeight="45">
+                    <tooltip>
+                        <Tooltip text="Use my current location"/>
+                    </tooltip>
+                </Button>
+
+                <Button fx:id="pickLocationButton"
+                        text="➕"
+                        onAction="#handlePickLocation"
+                        styleClass="header-action-button"
+                        minWidth="45"
+                        minHeight="45">
+                    <tooltip>
+                        <Tooltip text="Pick location on map"/>
+                    </tooltip>
+                </Button>
+
+                <Button text="↻"
+                        onAction="#handleRefresh"
+                        styleClass="header-action-button"
+                        minWidth="45"
+                        minHeight="45">
+                    <tooltip>
+                        <Tooltip text="Refresh pharmacies"/>
+                    </tooltip>
+                </Button>
+
+                <!-- Dark/Light Mode Toggle -->
+                <Button fx:id="themeToggleButton"
+                        text="🌙"
+                        onAction="#handleToggleTheme"
+                        styleClass="header-action-button"
+                        minWidth="45"
+                        minHeight="45">
+                    <tooltip>
+                        <Tooltip text="Toggle Dark/Light Mode"/>
+                    </tooltip>
+                </Button>
+            </HBox>
+        </HBox>
+    </top>
+
+    <!-- ============================================================
+         MAIN CONTENT AREA
+         ============================================================ -->
+    <center>
+        <AnchorPane style="-fx-background-color: #f5f5f5;">
+
+            <!-- MAIN MAP LAYER -->
+            <WebView fx:id="mapWebView"
+                     AnchorPane.topAnchor="0"
+                     AnchorPane.bottomAnchor="0"
+                     AnchorPane.leftAnchor="0"
+                     AnchorPane.rightAnchor="0"/>
+
+
+            <!-- Status Label (for temporary messages) -->
+            <StackPane AnchorPane.topAnchor="20"
+                       AnchorPane.leftAnchor="0"
+                       AnchorPane.rightAnchor="0"
+                       alignment="TOP_CENTER">
+                <Label fx:id="statusLabel"
+                       text=""
+                       styleClass="status-label"
+                       style="-fx-padding: 10 20;"
+                       managed="false"
+                       visible="false"/>
+            </StackPane>
+
+            <!-- Zoom Controls - Bottom Right -->
+            <VBox AnchorPane.bottomAnchor="60"
+                  AnchorPane.rightAnchor="20"
+                  spacing="6"
+                  pickOnBounds="true"
+                  style="-fx-background-color: white; -fx-background-radius: 6px; -fx-padding: 6; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0, 0, 2);">
+
+                <!-- Zoom In Button -->
+                <Button text="+"
+                        onAction="#handleZoomIn"
+                        styleClass="zoom-button"
+                        minWidth="35"
+                        minHeight="35"
+                        pickOnBounds="true"
+                        style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-background-color: white; -fx-border-color: #e0e0e0; -fx-border-width: 1; -fx-background-radius: 4px; -fx-cursor: hand;">
+                    <tooltip>
+                        <Tooltip text="Zoom In"/>
+                    </tooltip>
+                </Button>
+
+                <!-- Zoom Out Button -->
+                <Button text="−"
+                        onAction="#handleZoomOut"
+                        styleClass="zoom-button"
+                        minWidth="35"
+                        minHeight="35"
+                        pickOnBounds="true"
+                        style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-background-color: white; -fx-border-color: #e0e0e0; -fx-border-width: 1; -fx-background-radius: 4px; -fx-cursor: hand;">
+                    <tooltip>
+                        <Tooltip text="Zoom Out"/>
+                    </tooltip>
+                </Button>
+            </VBox>
+
+            <!-- LEFT SIDEBAR - Pharmacy List & Details -->
+            <StackPane AnchorPane.topAnchor="20"
+                       AnchorPane.bottomAnchor="50"
+                       AnchorPane.leftAnchor="20"
+                       pickOnBounds="false">
+
+                <HBox fx:id="sidebarContainer" alignment="CENTER_LEFT" spacing="0" pickOnBounds="false">
+
+                    <!-- Main Sidebar Panel -->
+                    <VBox fx:id="sidebar"
+                          spacing="12"
+                          styleClass="sidebar"
+                          prefWidth="320"
+                          minWidth="280"
+                          maxWidth="380"
+                          pickOnBounds="true">
+
+                        <padding>
+                            <Insets top="15" right="15" bottom="15" left="15"/>
+                        </padding>
+
+                        <!-- Header Section -->
+                        <VBox spacing="10">
+                            <HBox spacing="10" alignment="CENTER_LEFT">
+                                <Label text="Nearby Pharmacies" 
+                                       styleClass="sidebar-title"
+                                       HBox.hgrow="ALWAYS"/>
+                                <Label fx:id="countLabel" 
+                                       text="0" 
+                                       styleClass="count-label"/>
+                            </HBox>
+                            <Separator style="-fx-padding: 0;"/>
+                        </VBox>
+
+                        <!-- Sort Controls and Display Limit -->
+                        <HBox spacing="10" alignment="TOP_LEFT">
+                            <VBox spacing="8" HBox.hgrow="ALWAYS">
+                                <Label text="Sort by:" styleClass="section-label"/>
+                                <ComboBox fx:id="sortComboBox"
+                                          onAction="#handleSort"
+                                          maxWidth="Infinity"/>
+                            </VBox>
+                            <VBox spacing="8" HBox.hgrow="ALWAYS">
+                                <Label text="Show:" styleClass="section-label"/>
+                                <ComboBox fx:id="displayLimitComboBox"
+                                          onAction="#handleDisplayLimitChange"
+                                          maxWidth="Infinity"
+                                          promptText="50"/>
+                            </VBox>
+                        </HBox>
+
+                        <!-- Pharmacy List / Details Container (Toggled) -->
+                        <StackPane VBox.vgrow="ALWAYS" style="-fx-border-color: #e0e0e0; -fx-border-radius: 4;">
+                            
+                            <!-- Pharmacy List -->
+                            <VBox fx:id="pharmacyListWrapper" spacing="0">
+                                <ListView fx:id="pharmacyListView"
+                                          VBox.vgrow="ALWAYS"
+                                          styleClass="pharmacy-list"/>
+                            </VBox>
+
+                            <!-- Pharmacy Details Section -->
+                            <VBox fx:id="pharmacyInfoBox"
+                                  spacing="10"
+                                  visible="false"
+                                  managed="true"
+                                  style="-fx-background-color: #f1f8f6; -fx-border-color: #4caf50; -fx-border-width: 1; -fx-border-radius: 4; -fx-padding: 12; -fx-spacing: 10;">
+
+                                <!-- Details Header -->
+                                <Label text="📋 Pharmacy Details" 
+                                       style="-fx-font-size: 13; -fx-font-weight: bold; -fx-text-fill: #1b5e20;"/>
+
+                                <!-- Pharmacy Name -->
+                                <Label fx:id="pharmacyNameLabel"
+                                       styleClass="pharmacy-name"
+                                       wrapText="true"
+                                       style="-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #1565c0;"/>
+
+                                <!-- Address -->
+                                <VBox spacing="3">
+                                    <Label text="📍 Address" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
+                                    <Label fx:id="addressLabel" 
+                                           wrapText="true"
+                                           style="-fx-font-size: 12; -fx-text-fill: #333;"/>
+                                </VBox>
+
+                                <!-- Phone -->
+                                <VBox spacing="3">
+                                    <Label text="📞 Phone" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
+                                    <Label fx:id="phoneLabel" 
+                                           style="-fx-font-size: 12; -fx-text-fill: #333;"/>
+                                </VBox>
+
+                                <!-- Hours -->
+                                <VBox spacing="3">
+                                    <Label text="🕐 Hours" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
+                                    <Label fx:id="hoursLabel" 
+                                           wrapText="true"
+                                           style="-fx-font-size: 12; -fx-text-fill: #333;"/>
+                                </VBox>
+
+                                <!-- Distance -->
+                                <VBox spacing="3">
+                                    <Label text="📏 Distance" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
+                                    <Label fx:id="distanceLabel"
+                                           styleClass="distance-label"
+                                           style="-fx-font-size: 13; -fx-font-weight: bold; -fx-text-fill: #2e7d32;"/>
+                                </VBox>
+
+                                <!-- Back Button -->
+                                <Button text="← Back to List"
+                                        onAction="#handleBackToList"
+                                        style="-fx-padding: 8; -fx-font-size: 11; -fx-background-color: #fff; -fx-border-color: #4caf50; -fx-border-width: 1; -fx-text-fill: #1b5e20; -fx-font-weight: bold;"/>
+                            </VBox>
+                        </StackPane>
+                    </VBox>
+
+                    <!-- Sidebar Toggle Button - Always visible, moves with sidebar -->
+                    <Button fx:id="sidebarToggleButton"
+                            text="Open&#10;Pharmacies"
+                            onAction="#toggleSidebar"
+                            styleClass="sidebar-toggle"
+                            minWidth="80"
+                            maxWidth="80"
+                            wrapText="true"
+                            pickOnBounds="true"
+                            style="-fx-padding: 8 12;"/>
+                </HBox>
+            </StackPane>
+
+
+            <!-- LOADING OVERLAY - Shown during data fetch -->
+            <StackPane fx:id="loadingBox" 
+                       visible="false" 
+                       styleClass="loading-overlay" 
+                       AnchorPane.topAnchor="0" 
+                       AnchorPane.bottomAnchor="0" 
+                       AnchorPane.leftAnchor="0" 
+                       AnchorPane.rightAnchor="0">
+                <VBox alignment="CENTER" spacing="15">
+                    <ProgressIndicator prefWidth="60" prefHeight="60"/>
+                    <Label text="Loading pharmacies..." 
+                           styleClass="loading-label"
+                           style="-fx-font-size: 14;"/>
+                </VBox>
+            </StackPane>
+
+            <!-- BOTTOM STATUS BAR - Location & Info Display -->
+            <HBox AnchorPane.bottomAnchor="0" 
+                  AnchorPane.leftAnchor="0" 
+                  AnchorPane.rightAnchor="0" 
+                  alignment="CENTER_LEFT" 
+                  spacing="12" 
+                  styleClass="bottom-bar">
+                <padding>
+                    <Insets top="12" right="20" bottom="12" left="20"/>
+                </padding>
+                <Label text="📍" styleClass="bottom-bar-icon"/>
+                <Label fx:id="locationLabel"
+                       text="Unknown" 
+                       styleClass="bottom-bar-label"
+                       HBox.hgrow="ALWAYS"/>
+            </HBox>
+        </AnchorPane>
+    </center>
+</BorderPane>

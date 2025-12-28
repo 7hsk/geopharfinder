@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PharmaLocator Map</title>
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+/* ================= GLOBAL RESET ================= */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #f0f0f0;
+}
+
+/* ================= MAP CONTAINER ================= */
+#map {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    background: #f0f0f0;
+}
+
+/* ================= USER LOCATION ================= */
+.user-marker {
+    background: #1e88e5;
+    border: 3px solid white;
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 0 6px rgba(30,136,229,0.35);
+}
+
+/* ================= PHARMACY MARKER ================= */
+.pharmacy-marker {
+    width: 36px;
+    height: 46px;
+    transition: transform 0.2s ease-out; /* Simplified transition - only transform */
+    will-change: transform;
+}
+
+.pharmacy-marker-selected {
+    width: 47px;
+    height: 59px;
+    filter: drop-shadow(0 0 8px rgba(255,111,0,0.8));
+    z-index: 1000 !important;
+}
+
+.pharmacy-marker::before {
+    content: '';
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #34a853, #2d9248);
+    border: 3px solid white;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    /* Removed transition for better performance */
+}
+
+.pharmacy-marker::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    top: 8px;
+    left: 12px;
+    /* Removed transition for better performance */
+}
+
+/* ================= POPUP ================= */
+.leaflet-popup-content-wrapper {
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+}
+
+/* ================= PHARMACY AREA ================= */
+.pharmacy-area-polygon {
+    transition: opacity 0.2s; /* Simplified - only opacity transition for performance */
+}
+
+.pharmacy-area-polygon:hover {
+    cursor: pointer;
+}
+
+.popup-title {
+    font-weight: 600;
+    color: #1a73e8;
+    margin-bottom: 6px;
+}
+
+.popup-info {
+    font-size: 13px;
+    color: #555;
+    margin: 3px 0;
+}
+
+.popup-distance {
+    font-weight: 600;
+    color: #2e7d32;
+    margin-top: 6px;
+}
+</style>
+</head>
+<body>
+    <div id="map"></div>
+
+<script>
+/* ================= GLOBAL STATE ================= */
+var map;
+var userMarker;
+var routeLine;
+var markersLayer;
+var pharmacyMarkers = [];
+var pickLocationMode = false;
+var lastScale = 1;
+var selectedMarker = null;
+var selectedPharmacyId = null;
+var isProcessingClick = false; // Prevent rapid clicks causing freeze
+var clickDebounceTimer = null;  // Debounce timer
+var tileLayer = null; // Current tile layer
+var currentTileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'; // Default online tiles
+
+/* ================= MARKER BASE SIZE ================= */
+const BASE_MARKER_WIDTH = 28;
+const BASE_MARKER_HEIGHT = 36;
+
+/* ================= 🔥 CRITICAL FIX: JavaFX WebView Patch ================= */
+function patchLeafletForWebView() {
+    if (window.L && L.Browser) {
+        // Disable 3D transforms that cause glitches in JavaFX WebView
+        L.Browser.webkit3d = false;
+        L.Browser.any3d = false;
+        L.Browser.retina = false;
+        L.Browser.touch = false;
+
+        // Override setTransform to use 2D transforms only
+        var originalSetTransform = L.DomUtil.setTransform;
+        L.DomUtil.setTransform = function (el, offset, scale) {
+            if (!el) {
+                return;
+            }
+            var pos = offset || new L.Point(0, 0);
+            var transform = 'translate(' + pos.x + 'px,' + pos.y + 'px)';
+            if (scale) {
+                transform += ' scale(' + scale + ')';
+            }
+            el.style.transform = transform;
+            el.style.webkitTransform = transform;
+            el.style.msTransform = transform;
+        };
+
+        // Disable animated zoom that causes tile issues
+        L.Map.mergeOptions({ zoomAnimation: false, zoomSnap: 0 });
+        L.GridLayer.mergeOptions({ updateWhenZooming: false, keepBuffer: 4 });
+    }
+}
+
+/* ================= SAFE INVALIDATE ================= */
+function safeInvalidate() {
+    if (!map) return;
+    requestAnimationFrame(() => map.invalidateSize(false));
+}
+
+/* ================= MAP INIT ================= */
+function initMap(lat, lon, zoom) {
+
+    if (map) {
+        map.remove();
+        map = null;
+    }
+
+    // Apply the WebView patch BEFORE creating the map
+    patchLeafletForWebView();
+
+    map = L.map('map', {
+        center: [lat, lon],
+        zoom: zoom,
+        preferCanvas: true,
+        zoomAnimation: false,
+        fadeAnimation: false,
+        markerZoomAnimation: false,
+        inertia: false,
+        scrollWheelZoom: true,
+        trackResize: true,
+        zoomSnap: 1,
+        zoomDelta: 1,
+        zoomControl: false,  // Disable default zoom controls (we have custom ones in JavaFX)
+        attributionControl: false,
+        renderer: L.canvas() // Force canvas rendering for better performance
+    });
+
+    tileLayer = L.tileLayer(currentTileUrl, {
+        maxZoom: 19,
+        minZoom: 3,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 2, // Reduced from 4 to 2 for better performance
+        crossOrigin: true,
+        maxNativeZoom: 18 // Limit native zoom to reduce tile requests
+    }).addTo(map);
+
+    markersLayer = L.featureGroup().addTo(map);
+
+    map.whenReady(() => {
+        setTimeout(() => {
+            map.invalidateSize(false);
+        }, 300);
+    });
+
+    let zoomTimer = null;
+
+    map.on('zoomend', () => {
+        clearTimeout(zoomTimer);
+        zoomTimer = setTimeout(() => {
+            scalePharmacyMarkers();
+            updatePharmacyAreas();
+        }, 150); // Increased from 80ms to 150ms to reduce CPU usage
+    });
+
+    map.on('resize', function () {
+        safeInvalidate();
+    });
+
+    // Click on map void to deselect markers
+    map.on('click', function(e) {
+        // Only deselect if not in pick location mode and not processing another click
+        if (!pickLocationMode && selectedMarker && !isProcessingClick) {
+            try {
+                isProcessingClick = true;
+                
+                // Reset selected marker to green safely
+                if (selectedMarker.setIcon) {
+                    selectedMarker.setIcon(createPharmacyIcon(lastScale));
+                }
+                
+                // Reset area polygon styling safely
+                if (selectedMarker.areaPolygon && selectedMarker.areaPolygon.setStyle) {
+                    selectedMarker.areaPolygon.setStyle({
+                        fillOpacity: 0.15,
+                        opacity: 0.3,
+                        weight: 2,
+                        color: '#d32f2f',
+                        fillColor: '#ff5252'
+                    });
+                }
+                
+                // Clear selection
+                selectedMarker = null;
+                selectedPharmacyId = null;
+                
+                // Allow next click after delay
+                setTimeout(() => {
+                    isProcessingClick = false;
+                }, 150);
+                
+            } catch (error) {
+                console.error('Error deselecting marker:', error);
+                // Force clear selection even if error
+                selectedMarker = null;
+                selectedPharmacyId = null;
+                isProcessingClick = false;
+            }
+        }
+    });
+
+    attachPickHandler();
+}
+
+function enablePickLocationMode() {
+    if (!map) return;
+
+    pickLocationMode = true;
+    map.getContainer().style.cursor = "crosshair";
+    
+    // Hide ALL pharmacy area polygons and disable ALL interactions
+    markersLayer.eachLayer(layer => {
+        if (layer instanceof L.Polygon && !layer.isUserMarker) {
+            // Make polygons completely non-interactive
+            layer.options.interactive = false;
+            layer.setStyle({ 
+                opacity: 0, 
+                fillOpacity: 0
+            });
+            // Remove all event listeners temporarily
+            layer.off('click');
+            layer.off('mouseover');
+            layer.off('mouseout');
+        }
+        
+        // Disable pointer events on markers so clicks pass through
+        if (layer instanceof L.Marker && layer.pharmacyId) {
+            const element = layer.getElement();
+            if (element) {
+                element.style.pointerEvents = 'none';
+                element.style.cursor = 'crosshair';
+            }
+        }
+    });
+}
+
+function disablePickLocationMode() {
+    if (!map) return;
+
+    pickLocationMode = false;
+    map.getContainer().style.cursor = "";
+    
+    // Restore area polygons visibility and interactivity
+    markersLayer.eachLayer(layer => {
+        if (layer instanceof L.Polygon && !layer.isUserMarker) {
+            // Re-enable interactivity
+            layer.options.interactive = true;
+            // Restore event handlers will happen automatically
+        }
+    });
+    
+    updatePharmacyAreas();
+    
+    // Re-enable pointer events on markers
+    markersLayer.eachLayer(layer => {
+        if (layer instanceof L.Marker && layer.pharmacyId) {
+            const element = layer.getElement();
+            if (element) {
+                element.style.pointerEvents = 'auto';
+                element.style.cursor = 'pointer';
+            }
+        }
+    });
+}
+
+function setPharmacyMarkersOpacity(opacity) {
+    if (!markersLayer) return;
+
+    markersLayer.eachLayer(layer => {
+        if (layer instanceof L.Marker) {
+            const markerElement = layer.getElement();
+            if (markerElement) {
+                markerElement.style.opacity = opacity;
+            }
+        }
+    });
+}
+
+function onMapClick(e) {
+    if (pickLocationMode) {
+        // Pick location mode - set new location
+        pickLocationMode = false;
+        map.getContainer().style.cursor = "";
+
+        const lat = e.latlng.lat;
+        const lon = e.latlng.lng;
+
+        // Inform Java
+        if (window.java && window.java.onLocationPicked) {
+            window.java.onLocationPicked(lat, lon);
+        }
+    } else {
+        // Normal mode - clicking void area resets marker selection
+        if (selectedMarker) {
+            selectedMarker.setIcon(createPharmacyIcon(lastScale));
+
+            // Reset area polygon styling if exists
+            if (selectedMarker.areaPolygon) {
+                selectedMarker.areaPolygon.setStyle({
+                    fillOpacity: 0.15,
+                    opacity: 0.3,
+                    weight: 2,
+                    color: '#d32f2f',
+                    fillColor: '#ff5252'
+                });
+            }
+
+            selectedMarker = null;
+            selectedPharmacyId = null;
+        }
+    }
+}
+
+function attachPickHandler() {
+    if (!map) return;
+    map.on('click', onMapClick);
+}
+
+
+/* ================= USER LOCATION ================= */
+function setUserLocation(lat, lon) {
+    if (!map) return;
+
+    if (userMarker) map.removeLayer(userMarker);
+
+    userMarker = L.circleMarker([lat, lon], {
+        radius: 7,
+        color: '#1565c0',
+        weight: 2,
+        fillColor: '#2196f3',
+        fillOpacity: 0.95
+    }).addTo(map).bindPopup('<b>Your Location</b>');
+}
+
+/* ================= PHARMACY ICON ================= */
+function createPharmacyIcon(scale = 1) {
+    return L.divIcon({
+        className: 'pharmacy-marker',
+        iconSize: [
+            BASE_MARKER_WIDTH * scale,
+            BASE_MARKER_HEIGHT * scale
+        ],
+        iconAnchor: [
+            (BASE_MARKER_WIDTH * scale) / 2,
+            BASE_MARKER_HEIGHT * scale
+        ],
+        popupAnchor: [0, -28 * scale],
+        html: ''
+    });
+}
+
+/* ================= PHARMACY MARKER ================= */
+function createPharmacyMarker(pharmacy) {
+
+    const marker = L.marker(
+        [pharmacy.latitude, pharmacy.longitude],
+        {
+            icon: createPharmacyIcon(1),
+            title: pharmacy.name
+        }
+    );
+
+    let popup =
+        `<div class="popup-title">${pharmacy.name}</div>` +
+        (pharmacy.address ? `<div class="popup-info">📍 ${pharmacy.address}</div>` : '') +
+        (pharmacy.phone ? `<div class="popup-info">📞 ${pharmacy.phone}</div>` : '') +
+        (pharmacy.openingHours ? `<div class="popup-info">🕐 ${pharmacy.openingHours}</div>` : '') +
+        (pharmacy.distance ? `<div class="popup-distance">📏 ${pharmacy.distance}</div>` : '');
+
+    marker.bindPopup(popup);
+    return marker;
+}
+
+/* ================= ADD PHARMACIES ================= */
+function addPharmacyMarkers(pharmacies) {
+    clearPharmacies();
+    if (!pharmacies || pharmacies.length === 0) return;
+
+    pharmacies.forEach(pharmacy => {
+
+        /* =====================
+           MAIN MARKER
+           ===================== */
+        const marker = createPharmacyMarker(pharmacy);
+        marker.pharmacyId = pharmacy.id; // Store pharmacy ID on marker
+        
+
+        // CLICK → JavaFX side panel + Change marker color to RED
+        marker.on("click", (e) => {
+            // Don't handle clicks in pick location mode
+            if (pickLocationMode) {
+                return;
+            }
+            
+            // Prevent rapid clicks that cause freeze
+            if (isProcessingClick) {
+                console.log('Click ignored - processing previous click');
+                return;
+            }
+
+            try {
+                // Prevent event from bubbling to map (so clicking marker doesn't reset it)
+                L.DomEvent.stopPropagation(e);
+                
+                // Mark as processing
+                isProcessingClick = true;
+
+                // Reset previous selection
+                if (selectedMarker && selectedMarker !== marker) {
+                    if (selectedMarker.setIcon) {
+                        selectedMarker.setIcon(createPharmacyIcon(lastScale));
+                    }
+
+                    // Reset previous area polygon styling to default red
+                    if (selectedMarker.areaPolygon && selectedMarker.areaPolygon.setStyle) {
+                        selectedMarker.areaPolygon.setStyle({
+                            fillOpacity: 0.15,
+                            opacity: 0.3,
+                            weight: 2,
+                            color: '#d32f2f',
+                            fillColor: '#ff5252'
+                        });
+                    }
+                }
+
+                // Mark this marker as selected
+                selectedMarker = marker;
+                selectedPharmacyId = pharmacy.id;
+
+                // Highlight selected marker with RED/ORANGE color - STAYS RED
+                const selectedIcon = L.divIcon({
+                    className: 'pharmacy-marker-selected',
+                    iconSize: [
+                        BASE_MARKER_WIDTH * lastScale * 1.3,
+                        BASE_MARKER_HEIGHT * lastScale * 1.3
+                    ],
+                    iconAnchor: [
+                        (BASE_MARKER_WIDTH * lastScale * 1.3) / 2,
+                        BASE_MARKER_HEIGHT * lastScale * 1.3
+                    ],
+                    popupAnchor: [0, -28 * lastScale],
+                    html: '<div style="position: absolute; width: 100%; height: 100%;"><div style="width: 36px; height: 36px; background: linear-gradient(135deg, #ff6f00, #e65100); border: 3px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 12px rgba(255,111,0,0.6); position: absolute; top: 0; left: 0;"></div><div style="width: 12px; height: 12px; background: #fff; border-radius: 50%; position: absolute; top: 8px; left: 12px;"></div></div>'
+                });
+
+                marker.setIcon(selectedIcon);
+
+                // Highlight the area polygon with ORANGE styling (matches marker)
+                if (marker.areaPolygon && marker.areaPolygon.setStyle) {
+                    marker.areaPolygon.setStyle({
+                        fillOpacity: 0.45,
+                        opacity: 1,
+                        weight: 3,
+                        color: '#ff6f00',      // Orange border
+                        fillColor: '#ffb74d'   // Orange fill
+                    });
+                }
+
+                // Notify Java controller with delay to prevent freeze
+                setTimeout(() => {
+                    try {
+                        if (window.java && window.java.onPharmacyClicked) {
+                            window.java.onPharmacyClicked(pharmacy.id);
+                        }
+                    } catch (err) {
+                        console.error('Error calling Java:', err);
+                    } finally {
+                        // Allow next click after 200ms
+                        setTimeout(() => {
+                            isProcessingClick = false;
+                        }, 200);
+                    }
+                }, 50); // Small delay to let UI update first
+                
+            } catch (error) {
+                console.error('Error handling marker click:', error);
+                isProcessingClick = false; // Reset on error
+            }
+        });
+
+        // 🎉 HOVER SCALE EFFECT - Make marker bigger on hover
+        marker.on('mouseover', function() {
+            const markerElement = this.getElement();
+            if (markerElement) {
+                markerElement.style.transform = 'scale(1.2)';
+                markerElement.style.zIndex = '1000';
+            }
+            // Keep popup open while hovering
+            this.openPopup();
+        });
+
+        // Reset scale on mouseout
+        marker.on('mouseout', function() {
+            const markerElement = this.getElement();
+            if (markerElement) {
+                markerElement.style.transform = 'scale(1)';
+                markerElement.style.zIndex = 'auto';
+            }
+            // Close popup when leaving
+            this.closePopup();
+        });
+
+        pharmacyMarkers.push(marker);
+        markersLayer.addLayer(marker);
+
+        /* =====================
+           DYNAMIC PHARMACY AREA
+           ===================== */
+        let areaPolygon = null;
+        
+        // Use actual building geometry if available, otherwise create octagon
+        if (pharmacy.geometry && pharmacy.geometry.length > 0) {
+            // Use the real building shape from OSM data
+            const polygonPoints = pharmacy.geometry.map(coord => [coord[0], coord[1]]);
+            
+            areaPolygon = L.polygon(polygonPoints, {
+                color: '#d32f2f',
+                weight: 2,
+                opacity: 0.3,
+                fillColor: '#ff5252',
+                fillOpacity: 0.15,
+                className: 'pharmacy-area-polygon',
+                interactive: true
+            });
+        } else {
+            // Fallback: Create octagon if geometry not available
+            const radius = 40; // meters
+            const octagonPoints = [];
+            const numPoints = 8;
+            
+            for (let i = 0; i < numPoints; i++) {
+                const angle = (i / numPoints) * Math.PI * 2;
+                const offsetLat = (radius / 111320) * Math.cos(angle);
+                const offsetLon = (radius / (111320 * Math.cos(pharmacy.latitude * Math.PI / 180))) * Math.sin(angle);
+                octagonPoints.push([
+                    pharmacy.latitude + offsetLat,
+                    pharmacy.longitude + offsetLon
+                ]);
+            }
+
+            areaPolygon = L.polygon(octagonPoints, {
+                color: '#d32f2f',
+                weight: 2,
+                opacity: 0.3,
+                fillColor: '#ff5252',
+                fillOpacity: 0.15,
+                className: 'pharmacy-area-polygon',
+                interactive: true
+            });
+        }
+
+        areaPolygon.pharmacyId = pharmacy.id;
+        areaPolygon.pharmacyName = pharmacy.name;
+
+        // Hover effects for area
+        areaPolygon.on('mouseover', function() {
+            this.setStyle({
+                fillOpacity: 0.35,
+                opacity: 0.8,
+                weight: 3
+            });
+        });
+
+        areaPolygon.on('mouseout', function() {
+            // Reset unless it's selected
+            if (selectedPharmacyId !== pharmacy.id) {
+                this.setStyle({
+                    fillOpacity: 0.15,
+                    opacity: 0.3,
+                    weight: 2
+                });
+            }
+        });
+
+        // Click on area selects the pharmacy (unless in pick location mode)
+        areaPolygon.on('click', (e) => {
+            // Don't handle clicks in pick location mode
+            if (pickLocationMode) {
+                return;
+            }
+
+            try {
+                L.DomEvent.stopPropagation(e);
+                if (window.java && window.java.onPharmacyClicked) {
+                    window.java.onPharmacyClicked(pharmacy.id);
+                }
+            } catch (error) {
+                console.error('Error handling area polygon click:', error);
+            }
+        });
+
+        // Store polygon for later highlighting
+        marker.areaPolygon = areaPolygon;
+        markersLayer.addLayer(areaPolygon);
+    });
+
+    if (userMarker) userMarker.bringToFront();
+    fitBounds();
+}
+
+
+/* ================= SCALE MARKERS ================= */
+function scalePharmacyMarkers() {
+    if (!map) return;
+
+    const zoom = map.getZoom();
+
+    // Enhanced scaling formula: markers become much smaller when zoomed out
+    // Zoom levels: 0-22 (typically 10-18 for city views)
+    // At zoom 10: scale = 0.3 (very small)
+    // At zoom 13: scale = 0.6 (small)
+    // At zoom 15: scale = 1.0 (normal)
+    // At zoom 18: scale = 1.4 (large)
+    let scale = 0.3 + (zoom - 10) * 0.13;
+    scale = Math.max(0.25, Math.min(scale, 1.5));
+
+    if (Math.abs(scale - lastScale) < 0.03) return;
+    lastScale = scale;
+
+    pharmacyMarkers.forEach(marker => {
+        if (marker && marker.setIcon){
+            // Check if this marker is selected - preserve red color
+            if (selectedMarker === marker) {
+                // Keep selected marker with red/orange color
+                const selectedIcon = L.divIcon({
+                    className: 'pharmacy-marker-selected',
+                    iconSize: [
+                        BASE_MARKER_WIDTH * lastScale * 1.3,
+                        BASE_MARKER_HEIGHT * lastScale * 1.3
+                    ],
+                    iconAnchor: [
+                        (BASE_MARKER_WIDTH * lastScale * 1.3) / 2,
+                        BASE_MARKER_HEIGHT * lastScale * 1.3
+                    ],
+                    popupAnchor: [0, -28 * lastScale],
+                    html: '<div style="position: absolute; width: 100%; height: 100%;"><div style="width: 36px; height: 36px; background: linear-gradient(135deg, #ff6f00, #e65100); border: 3px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 12px rgba(255,111,0,0.6); position: absolute; top: 0; left: 0;"></div><div style="width: 12px; height: 12px; background: #fff; border-radius: 50%; position: absolute; top: 8px; left: 12px;"></div></div>'
+                });
+                marker.setIcon(selectedIcon);
+            } else {
+                // Regular green marker
+                marker.setIcon(createPharmacyIcon(lastScale));
+            }
+        }
+    });
+}
+
+/* ================= AREA VISIBILITY ================= */
+function updatePharmacyAreas() {
+    if (!map || !markersLayer) return;
+
+    const zoom = map.getZoom();
+
+    // Dynamically adjust pharmacy area visibility, opacity AND stroke weight based on zoom
+    markersLayer.eachLayer(layer => {
+        if (layer instanceof L.Polygon && !layer.isUserMarker) {
+            if (zoom < 13) {
+                // Very zoomed out - hide areas completely
+                layer.setStyle({ opacity: 0, fillOpacity: 0, weight: 1 });
+            } else if (zoom < 15) {
+                // Medium zoom - subtle areas with thin stroke
+                layer.setStyle({ opacity: 0.15, fillOpacity: 0.08, weight: 1 });
+            } else if (zoom < 17) {
+                // Zoomed in - more visible with normal stroke
+                layer.setStyle({ opacity: 0.3, fillOpacity: 0.15, weight: 2 });
+            } else {
+                // Very zoomed in - very visible with thick stroke
+                layer.setStyle({ opacity: 0.5, fillOpacity: 0.25, weight: 3 });
+            }
+        }
+    });
+}
+
+/* ================= BOUNDS ================= */
+function fitBounds() {
+    if (!markersLayer) return;
+
+    const bounds = markersLayer.getBounds();
+    if (bounds.isValid()) {
+        if (userMarker) bounds.extend(userMarker.getLatLng());
+        map.fitBounds(bounds, {
+            padding: [40, 40],
+            maxZoom: 16,
+            animate: false
+        });
+        setTimeout(safeInvalidate, 120);
+    }
+}
+
+/* ================= CLEAR ================= */
+function clearPharmacies() {
+    if (!markersLayer) return;
+    
+    // Properly remove all layers to prevent memory leaks
+    markersLayer.eachLayer(layer => {
+        markersLayer.removeLayer(layer);
+    });
+    
+    // Clear arrays and references
+    pharmacyMarkers.forEach(marker => {
+        if (marker && marker.areaPolygon) {
+            marker.areaPolygon = null;
+        }
+    });
+    
+    pharmacyMarkers = [];
+    selectedMarker = null;
+    selectedPharmacyId = null;
+}
+
+/* ================= ROUTE ================= */
+function drawRoute(lat1, lon1, lat2, lon2) {
+    clearRoute();
+
+    routeLine = L.polyline(
+        [[lat1, lon1], [lat2, lon2]],
+        {
+            color: '#1e88e5',
+            weight: 4,
+            dashArray: '8,6'
+        }
+    ).addTo(map);
+
+    map.fitBounds(routeLine.getBounds(), {
+        padding: [50, 50],
+        animate: false
+    });
+}
+
+function clearRoute() {
+    if (routeLine) {
+        map.removeLayer(routeLine);
+        routeLine = null;
+    }
+}
+
+/* ================= UTILS ================= */
+function centerMap(lat, lon, zoom) {
+    if (map) {
+        // Disable animation for instant centering
+        map.setView([lat, lon], zoom, { animate: false, duration: 0 });
+    }
+}
+
+function refreshMap() {
+    safeInvalidate();
+}
+
+function highlightPharmacy(lat, lon) {
+    centerMap(lat, lon, 16);
+}
+
+/* ================= SELECT MARKER BY ID ================= */
+function selectMarkerById(pharmacyId) {
+    const marker = pharmacyMarkers.find(m => m.pharmacyId === pharmacyId);
+    if (marker) {
+        // Reset previous selection
+        if (selectedMarker && selectedMarker !== marker) {
+            selectedMarker.setIcon(createPharmacyIcon(lastScale));
+            // Reset previous area polygon styling to default red
+            if (selectedMarker.areaPolygon) {
+                selectedMarker.areaPolygon.setStyle({
+                    fillOpacity: 0.15,
+                    opacity: 0.3,
+                    weight: 2,
+                    color: '#d32f2f',
+                    fillColor: '#ff5252'
+                });
+            }
+        }
+
+        // Mark this marker as selected
+        selectedMarker = marker;
+        selectedPharmacyId = pharmacyId;
+
+        // Highlight selected marker with RED/ORANGE color
+        const selectedIcon = L.divIcon({
+            className: 'pharmacy-marker-selected',
+            iconSize: [
+                BASE_MARKER_WIDTH * lastScale * 1.3,
+                BASE_MARKER_HEIGHT * lastScale * 1.3
+            ],
+            iconAnchor: [
+                (BASE_MARKER_WIDTH * lastScale * 1.3) / 2,
+                BASE_MARKER_HEIGHT * lastScale * 1.3
+            ],
+            popupAnchor: [0, -28 * lastScale],
+            html: '<div style="position: absolute; width: 100%; height: 100%;"><div style="width: 36px; height: 36px; background: linear-gradient(135deg, #ff6f00, #e65100); border: 3px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 12px rgba(255,111,0,0.6); position: absolute; top: 0; left: 0;"></div><div style="width: 12px; height: 12px; background: #fff; border-radius: 50%; position: absolute; top: 8px; left: 12px;"></div></div>'
+        });
+
+        marker.setIcon(selectedIcon);
+
+        // Highlight the area polygon with ORANGE styling (not red)
+        if (marker.areaPolygon) {
+            marker.areaPolygon.setStyle({
+                fillOpacity: 0.45,
+                opacity: 1,
+                weight: 3,
+                color: '#ff6f00',      // Orange border
+                fillColor: '#ffb74d'   // Orange fill
+            });
+        }
+    }
+}
+
+
+
+window.ensureMap = function () {
+    return map;
+};
+
+window.invalidateMapSize = function () {
+    safeInvalidate();
+};
+
+/* ================= TILE LAYER SWITCHING ================= */
+window.switchToOnlineTiles = function() {
+    if (!map || !tileLayer) return;
+
+    var newUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    if (currentTileUrl === newUrl) return; // Already using online tiles
+
+    console.log('🌐 Switching to online tiles...');
+    currentTileUrl = newUrl;
+
+    // Remove old tile layer
+    map.removeLayer(tileLayer);
+
+    // Add new tile layer with online URL
+    tileLayer = L.tileLayer(currentTileUrl, {
+        maxZoom: 19,
+        minZoom: 3,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 4,
+        crossOrigin: true
+    }).addTo(map);
+
+    console.log('✅ Switched to online tiles');
+};
+
+window.switchToOfflineTiles = function(localTileUrl) {
+    if (!map || !tileLayer) return;
+
+    if (currentTileUrl === localTileUrl) return; // Already using this tile source
+
+    console.log('📵 Switching to offline cached tiles:', localTileUrl);
+    currentTileUrl = localTileUrl;
+
+    // Remove old tile layer
+    map.removeLayer(tileLayer);
+
+    // Add new tile layer with local server URL
+    tileLayer = L.tileLayer(currentTileUrl, {
+        maxZoom: 19,
+        minZoom: 3,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 4,
+        crossOrigin: false // Local tiles don't need CORS
+    }).addTo(map);
+
+    console.log('✅ Switched to offline tiles');
+};
+
+window.addEventListener('resize', function () {
+    safeInvalidate();
+});
+
+console.log('✔ PharmaLocator Map Loaded — WebView Patch Applied — Glitch Fixed!');
+</script>
+</body>
+</html>
+

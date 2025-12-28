@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PharmaLocator Map</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin=""/>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            background: #f0f0f0;
+            /* Avoid position: fixed in JavaFX WebView to prevent rendering glitches */
+            position: relative;
+        }
+
+        #map {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #f0f0f0;
+        }
+
+        /* Fix for JavaFX WebView rendering issues */
+        .leaflet-container {
+            background: #f0f0f0;
+        }
+
+        /* Avoid forcing 3D transforms in JavaFX WebView to prevent tile seams */
+        .leaflet-tile-container {
+        }
+
+        .leaflet-tile {
+            /* Use default rendering to avoid tile seams in JavaFX WebView */
+            image-rendering: auto;
+        }
+
+        /* Blue dot for user location - MAXIMUM VISIBILITY! */
+        .user-marker-container {
+            z-index: 99999 !important;
+            position: relative;
+        }
+
+        .user-marker {
+            background-color: #4285F4 !important;
+            border: 5px solid white !important;
+            border-radius: 50% !important;
+            width: 30px !important;
+            height: 30px !important;
+            box-shadow: 0 0 0 5px rgba(66, 133, 244, 0.4),
+                        0 3px 10px rgba(0, 0, 0, 0.5) !important;
+            position: relative !important;
+            z-index: 99999 !important;
+            animation: pulse 2s infinite !important;
+        }
+
+        /* Pulsing animation for user marker - MORE VISIBLE! */
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(66, 133, 244, 0.8),
+                            0 3px 10px rgba(0, 0, 0, 0.5);
+                transform: scale(1);
+            }
+            50% {
+                box-shadow: 0 0 0 12px rgba(66, 133, 244, 0),
+                            0 3px 10px rgba(0, 0, 0, 0.5);
+                transform: scale(1.1);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(66, 133, 244, 0),
+                            0 3px 10px rgba(0, 0, 0, 0.5);
+                transform: scale(1);
+            }
+        }
+
+        /* Modern green location pin for pharmacies */
+        .pharmacy-marker {
+            position: relative;
+            width: 36px;
+            height: 46px;
+        }
+
+        /* Main pin shape */
+        .pharmacy-marker::before {
+            content: '';
+            position: absolute;
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #34a853 0%, #2d9248 100%);
+            border: 3px solid white;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            left: 0;
+            top: 0;
+            box-shadow: 0 4px 12px rgba(52, 168, 83, 0.5), 0 2px 4px rgba(0,0,0,0.3);
+            transition: all 0.2s ease;
+        }
+
+        /* White center dot */
+        .pharmacy-marker::after {
+            content: '';
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: white;
+            border-radius: 50%;
+            left: 12px;
+            top: 7px;
+            z-index: 1;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+
+        /* Hover effect */
+        .pharmacy-marker:hover::before {
+            transform: rotate(-45deg) scale(1.1);
+            box-shadow: 0 6px 16px rgba(52, 168, 83, 0.6), 0 3px 6px rgba(0,0,0,0.4);
+        }
+        
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px;
+            box-shadow: 0 3px 14px rgba(0,0,0,0.4);
+        }
+        
+        .leaflet-popup-content {
+            margin: 12px;
+            line-height: 1.4;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        
+        .popup-title {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: #1a73e8;
+        }
+        
+        .popup-info {
+            font-size: 13px;
+            color: #5f6368;
+            margin: 4px 0;
+        }
+        
+        .popup-distance {
+            font-weight: 600;
+            color: #34a853;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    
+    <script>
+        // Global variables
+        let map;
+        let userMarker;
+        let pharmacyMarkers = [];
+        let routeLine;
+        let markersLayer;
+        
+        // Rely on CSS 100% sizing inside JavaFX WebView; no explicit pixel sizing
+        function setMapSize() {
+            // no-op on purpose: explicit pixel sizes can cause a tiny/clipped map in WebView
+        }
+        
+        // Simple debounce utility
+        function debounce(fn, wait) {
+            let t; return function() { clearTimeout(t); t = setTimeout(() => fn.apply(this, arguments), wait); };
+        }
+        
+        // Report readiness to Java side if needed
+        function isMapReady() { return !!map; }
+        
+        /**
+         * Initializes the map
+         */
+        function initMap(lat, lon, zoom) {
+            console.log('Initializing map at', lat, lon, 'zoom', zoom);
+
+            // Ensure container has explicit size before Leaflet mounts
+            setMapSize();
+
+            // Destroy existing map if it exists (prevents glitches)
+            if (map) {
+                console.log('Removing existing map instance');
+                map.remove();
+                map = null;
+            }
+
+            // Create map with JavaFX-optimized settings
+            map = L.map('map', {
+                center: [lat, lon],
+                zoom: zoom,
+                zoomControl: true,
+                attributionControl: true,
+                preferCanvas: false,  // Use SVG renderer; can eliminate right-side tile artifacts in some WebView setups
+                fadeAnimation: false, // Disable fade to prevent glitches
+                zoomAnimation: false, // Disable zoom animation to avoid tile tearing
+                markerZoomAnimation: false,
+                trackResize: true
+            });
+
+            // Add Carto Voyager tiles (stable, fast CDN)
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19,
+                minZoom: 3,
+                tileSize: 256,
+                detectRetina: false,
+                updateWhenIdle: true,
+                updateWhenZooming: false,
+                keepBuffer: 2,
+                crossOrigin: true
+            }).addTo(map);
+
+            // Create layer group for markers
+            markersLayer = L.layerGroup().addTo(map);
+
+            // Register click handler now that map exists
+            addMapClickHandler();
+
+            // Map load/sizing safeguards
+            const doInvalidate = () => { if (map) { setMapSize(); map.invalidateSize(true); } };
+            map.on('load', doInvalidate);
+            map.whenReady(doInvalidate);
+
+            // Debounced window resize
+            window.addEventListener('resize', debounce(doInvalidate, 120));
+
+            // Visibility change (when WebView gains focus)
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden) {
+                    setTimeout(doInvalidate, 50);
+                    setTimeout(doInvalidate, 300);
+                }
+            });
+
+            // Observe #map element size changes (if supported)
+            try {
+                if (window.ResizeObserver) {
+                    const ro = new ResizeObserver(debounce(doInvalidate, 100));
+                    ro.observe(document.getElementById('map'));
+                    window._mapResizeObserver = ro;
+                }
+            } catch (e) { console.warn('ResizeObserver not available', e); }
+
+            // Initial invalidations after initialization (fixes JavaFX rendering)
+            setTimeout(doInvalidate, 80);
+            setTimeout(doInvalidate, 400);
+            setTimeout(doInvalidate, 900);
+
+            console.log('Map initialized successfully');
+        }
+        
+        /**
+         * Sets user location marker (blue pulsing dot) - ALWAYS VISIBLE ON TOP!
+         */
+        function setUserLocation(lat, lon) {
+            if (!map) { return; }
+
+            // Remove existing user marker
+            if (userMarker) {
+                map.removeLayer(userMarker);
+            }
+
+            // Simple, stable user marker (no animations/div icons)
+            userMarker = L.circleMarker([lat, lon], {
+                radius: 7,
+                color: '#1976d2',
+                weight: 2,
+                opacity: 1,
+                fillColor: '#2196f3',
+                fillOpacity: 0.9
+            }).addTo(map).bindPopup('<b>Your Location</b>');
+        }
+        
+        /**
+         * Adds pharmacy markers to the map
+         */
+        function addPharmacyMarkers(pharmacies) {
+            console.log('addPharmacyMarkers called with', pharmacies ? pharmacies.length : 0, 'pharmacies');
+
+            if (!map) {
+                console.error('Map not initialized!');
+                return;
+            }
+
+            // Clear existing pharmacy markers
+            clearPharmacyMarkers();
+
+            if (!pharmacies || pharmacies.length === 0) {
+                console.log('No pharmacies to display');
+                return;
+            }
+
+            let addedCount = 0;
+
+            pharmacies.forEach(function(pharmacy, index) {
+                console.log('Adding pharmacy', index + 1, ':', pharmacy.name, 'at', pharmacy.latitude, pharmacy.longitude);
+
+                // Create simple default marker (stable in JavaFX WebView)
+                const marker = L.marker([pharmacy.latitude, pharmacy.longitude], {
+                    title: pharmacy.name
+                });
+
+                // Create popup content
+                let popupContent = '<div class="popup-title">' + pharmacy.name + '</div>';
+
+                if (pharmacy.address) {
+                    popupContent += '<div class="popup-info">📍 ' + pharmacy.address + '</div>';
+                }
+
+                if (pharmacy.phone) {
+                    popupContent += '<div class="popup-info">📞 ' + pharmacy.phone + '</div>';
+                }
+
+                if (pharmacy.openingHours) {
+                    popupContent += '<div class="popup-info">🕐 ' + pharmacy.openingHours + '</div>';
+                }
+
+                if (pharmacy.distance) {
+                    popupContent += '<div class="popup-distance">📏 ' + pharmacy.distance + '</div>';
+                }
+
+                marker.bindPopup(popupContent);
+
+                // Add to markers array and layer
+                pharmacyMarkers.push(marker);
+                markersLayer.addLayer(marker);
+                addedCount++;
+            });
+
+            console.log('✓ Successfully added', addedCount, 'pharmacy markers to map');
+
+            // Bring user marker to front (ensure it's on top of pharmacies)
+            if (userMarker) {
+                userMarker.setZIndexOffset(99999);
+                console.log('🔵 User marker brought to front (on top of pharmacies)');
+            }
+
+            // Fit bounds to show all markers
+            if (pharmacyMarkers.length > 0) {
+                console.log('Fitting bounds to show all markers...');
+                fitBounds();
+            }
+        }
+        
+        /**
+         * Clears all pharmacy markers
+         */
+        function clearPharmacyMarkers() {
+            pharmacyMarkers.forEach(function(marker) {
+                markersLayer.removeLayer(marker);
+            });
+            pharmacyMarkers = [];
+            console.log('Pharmacy markers cleared');
+        }
+
+        /**
+         * Alias for clearPharmacyMarkers (for Java calls)
+         */
+        function clearPharmacies() {
+            clearPharmacyMarkers();
+        }
+
+        /**
+         * Enable map clicking to select location manually
+         */
+        var mapClickEnabled = false;
+
+        function enableMapClick() {
+            mapClickEnabled = true;
+            map.getContainer().style.cursor = 'crosshair';
+            console.log('Map click enabled - click anywhere to select your location');
+        }
+
+        function disableMapClick() {
+            mapClickEnabled = false;
+            map.getContainer().style.cursor = '';
+            console.log('Map click disabled');
+        }
+
+        // Handle map clicks for manual location selection (registered after map init)
+        function addMapClickHandler() {
+            if (!map) return;
+            map.on('click', function(e) {
+                if (!mapClickEnabled) return;
+                const lat = e.latlng.lat;
+                const lon = e.latlng.lng;
+
+                // Update user marker
+                setUserLocation(lat, lon);
+
+                // Store coordinates
+                window.userLatitude = lat;
+                window.userLongitude = lon;
+                window.locationDetected = true;
+                window.locationManuallySelected = true;
+
+                // Disable map click
+                disableMapClick();
+
+                console.log('✓ Location manually selected:', lat, lon);
+            });
+        }
+
+        /**
+         * Gets user's location using HTML5 Geolocation API
+         * Returns coordinates via callback to Java
+         */
+        function getUserLocationFromBrowser() {
+            console.log('========================================');
+            console.log('🔍 REQUESTING BROWSER GEOLOCATION...');
+            console.log('⚠️ BROWSER SHOULD ASK FOR PERMISSION NOW!');
+            console.log('========================================');
+
+            if (!navigator.geolocation) {
+                console.error('❌ Geolocation not supported by browser');
+                window.locationDetected = false;
+                return;
+            }
+
+            console.log('✓ Geolocation API available, calling getCurrentPosition()...');
+
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const accuracy = position.coords.accuracy;
+
+                    console.log('========================================');
+                    console.log('✅ SUCCESS! Browser location detected!');
+                    console.log('📍 Latitude:', lat);
+                    console.log('📍 Longitude:', lon);
+                    console.log('🎯 Accuracy:', accuracy, 'meters');
+                    console.log('========================================');
+
+                    // Update user marker
+                    setUserLocation(lat, lon);
+
+                    // Center map on user location
+                    map.setView([lat, lon], 14);
+
+                    // Store coordinates in window object so Java can read them
+                    window.userLatitude = lat;
+                    window.userLongitude = lon;
+                    window.locationDetected = true;
+
+                    console.log('✓ Coordinates stored in window object for Java to read');
+                    console.log('✓ window.locationDetected = true');
+                },
+                function(error) {
+                    console.log('========================================');
+                    console.log('❌ GEOLOCATION ERROR!');
+                    console.error('Error code:', error.code);
+                    console.error('Error message:', error.message);
+
+                    let errorMsg = 'Could not get your location.\n\n';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED:
+                            errorMsg += '❌ Permission denied - user blocked location access';
+                            console.log('❌ PERMISSION_DENIED - User clicked "Block" or "Deny"');
+                            break;
+                        case error.POSITION_UNAVAILABLE:
+                            errorMsg += '❌ Location information unavailable';
+                            console.log('❌ POSITION_UNAVAILABLE - GPS not available');
+                            break;
+                        case error.TIMEOUT:
+                            errorMsg += '❌ Location request timed out';
+                            console.log('❌ TIMEOUT - Took too long to get location');
+                            break;
+                        default:
+                            errorMsg += '❌ Unknown error occurred';
+                            console.log('❌ UNKNOWN ERROR');
+                    }
+
+                    // Mark as failed
+                    window.locationDetected = false;
+
+                    console.log(errorMsg);
+                    console.log('========================================');
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+        
+        /**
+         * Draws a route line between two points
+         */
+        function drawRoute(startLat, startLon, endLat, endLon) {
+            // Clear existing route
+            clearRoute();
+            
+            // Create polyline
+            const latlngs = [
+                [startLat, startLon],
+                [endLat, endLon]
+            ];
+            
+            routeLine = L.polyline(latlngs, {
+                color: '#4285F4',
+                weight: 4,
+                opacity: 0.7,
+                dashArray: '10, 10'
+            }).addTo(map);
+            
+            // Fit bounds to show the route
+            map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+            
+            console.log('Route drawn');
+        }
+        
+        /**
+         * Clears the route line
+         */
+        function clearRoute() {
+            if (routeLine) {
+                map.removeLayer(routeLine);
+                routeLine = null;
+                console.log('Route cleared');
+            }
+        }
+        
+        /**
+         * Centers the map on given coordinates
+         */
+        function centerMap(lat, lon, zoom) {
+            map.setView([lat, lon], zoom);
+            console.log('Map centered on', lat, lon, 'zoom', zoom);
+        }
+        
+        /**
+         * Fits map bounds to show all markers
+         */
+        function fitBounds() {
+            const bounds = markersLayer.getBounds();
+
+            if (bounds.isValid()) {
+                // Include user marker if exists
+                if (userMarker) {
+                    bounds.extend(userMarker.getLatLng());
+                }
+
+                // Fit bounds with neutral, symmetric padding (avoid left-shift artifacts)
+                map.fitBounds(bounds, {
+                    padding: [40, 40],
+                    maxZoom: 15,
+                    animate: false
+                });
+
+                console.log('Map fitted to show all markers');
+
+                // Invalidate size after fitting bounds (fixes JavaFX rendering)
+                setTimeout(function() {
+                    if (map) {
+                        map.invalidateSize(true);
+                    }
+                }, 120);
+            }
+        }
+
+        /**
+         * Refresh map rendering (fixes JavaFX WebView glitches)
+         */
+        function refreshMap() {
+            if (map) {
+                console.log('Refreshing map to fix rendering issues...');
+                map.invalidateSize(true);
+
+                // Force redraw of all layers
+                map.eachLayer(function(layer) {
+                    if (layer.redraw) {
+                        layer.redraw();
+                    }
+                });
+
+                console.log('Map refreshed');
+            }
+        }
+
+        // Log when map is ready
+        console.log('Map script loaded and ready');
+    </script>
+</body>
+</html>
+

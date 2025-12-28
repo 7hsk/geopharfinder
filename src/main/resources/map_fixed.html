@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PharmaLocator Map</title>
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+/* ================= GLOBAL RESET ================= */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #f0f0f0;
+}
+
+/* ================= MAP CONTAINER ================= */
+#map {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    background: #f0f0f0;
+}
+
+/* ================= USER LOCATION ================= */
+.user-marker {
+    background: #1e88e5;
+    border: 3px solid white;
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 0 6px rgba(30,136,229,0.35);
+}
+
+/* ================= PHARMACY MARKER ================= */
+.pharmacy-marker {
+    width: 36px;
+    height: 46px;
+}
+
+.pharmacy-marker::before {
+    content: '';
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #34a853, #2d9248);
+    border: 3px solid white;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+}
+
+.pharmacy-marker::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    top: 8px;
+    left: 12px;
+}
+
+/* ================= POPUP ================= */
+.leaflet-popup-content-wrapper {
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+}
+
+.popup-title {
+    font-weight: 600;
+    color: #1a73e8;
+    margin-bottom: 6px;
+}
+
+.popup-info {
+    font-size: 13px;
+    color: #555;
+    margin: 3px 0;
+}
+
+.popup-distance {
+    font-weight: 600;
+    color: #2e7d32;
+    margin-top: 6px;
+}
+</style>
+</head>
+<body>
+    <div id="map"></div>
+
+<script>
+/* ================= GLOBAL STATE ================= */
+var map;
+var userMarker;
+var routeLine;
+var markersLayer;
+var pharmacyMarkers = [];
+var pickLocationMode = false;
+var lastScale = 1;
+
+/* ================= MARKER BASE SIZE ================= */
+const BASE_MARKER_WIDTH = 28;
+const BASE_MARKER_HEIGHT = 36;
+
+/* ================= 🔥 CRITICAL FIX: JavaFX WebView Patch ================= */
+function patchLeafletForWebView() {
+    if (window.L && L.Browser) {
+        // Disable 3D transforms that cause glitches in JavaFX WebView
+        L.Browser.webkit3d = false;
+        L.Browser.any3d = false;
+        L.Browser.retina = false;
+        L.Browser.touch = false;
+
+        // Override setTransform to use 2D transforms only
+        var originalSetTransform = L.DomUtil.setTransform;
+        L.DomUtil.setTransform = function (el, offset, scale) {
+            if (!el) {
+                return;
+            }
+            var pos = offset || new L.Point(0, 0);
+            var transform = 'translate(' + pos.x + 'px,' + pos.y + 'px)';
+            if (scale) {
+                transform += ' scale(' + scale + ')';
+            }
+            el.style.transform = transform;
+            el.style.webkitTransform = transform;
+            el.style.msTransform = transform;
+        };
+
+        // Disable animated zoom that causes tile issues
+        L.Map.mergeOptions({ zoomAnimation: false, zoomSnap: 0 });
+        L.GridLayer.mergeOptions({ updateWhenZooming: false, keepBuffer: 4 });
+    }
+}
+
+/* ================= SAFE INVALIDATE ================= */
+function safeInvalidate() {
+    if (!map) return;
+    requestAnimationFrame(() => map.invalidateSize(false));
+}
+
+/* ================= MAP INIT ================= */
+function initMap(lat, lon, zoom) {
+
+    if (map) {
+        map.remove();
+        map = null;
+    }
+
+    // Apply the WebView patch BEFORE creating the map
+    patchLeafletForWebView();
+
+    map = L.map('map', {
+        center: [lat, lon],
+        zoom: zoom,
+        preferCanvas: true,
+        zoomAnimation: false,
+        fadeAnimation: false,
+        markerZoomAnimation: false,
+        inertia: false,
+        scrollWheelZoom: true,
+        trackResize: true,
+        zoomSnap: 1,
+        zoomDelta: 1,
+        attributionControl: false
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        minZoom: 3,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 4,
+        crossOrigin: true
+    }).addTo(map);
+
+    markersLayer = L.featureGroup().addTo(map);
+
+    map.whenReady(() => {
+        setTimeout(() => {
+            map.invalidateSize(false);
+        }, 300);
+    });
+
+    let zoomTimer = null;
+
+    map.on('zoomend', () => {
+        clearTimeout(zoomTimer);
+        zoomTimer = setTimeout(() => {
+            scalePharmacyMarkers();
+            updatePharmacyAreas();
+        }, 80);
+    });
+
+    map.on('resize', function () {
+        safeInvalidate();
+    });
+
+    attachPickHandler();
+}
+
+function enablePickLocationMode() {
+    if (!map) return;
+
+    pickLocationMode = true;
+    map.getContainer().style.cursor = "crosshair";
+}
+
+function onMapClick(e) {
+    if (!pickLocationMode) return;
+
+    pickLocationMode = false;
+    map.getContainer().style.cursor = "";
+
+    const lat = e.latlng.lat;
+    const lon = e.latlng.lng;
+
+    // Inform Java
+    if (window.java && window.java.onLocationPicked) {
+        window.java.onLocationPicked(lat, lon);
+    }
+}
+
+function attachPickHandler() {
+    if (!map) return;
+    map.on('click', onMapClick);
+}
+
+
+/* ================= USER LOCATION ================= */
+function setUserLocation(lat, lon) {
+    if (!map) return;
+
+    if (userMarker) map.removeLayer(userMarker);
+
+    userMarker = L.circleMarker([lat, lon], {
+        radius: 7,
+        color: '#1565c0',
+        weight: 2,
+        fillColor: '#2196f3',
+        fillOpacity: 0.95
+    }).addTo(map).bindPopup('<b>Your Location</b>');
+}
+
+/* ================= PHARMACY ICON ================= */
+function createPharmacyIcon(scale = 1) {
+    return L.divIcon({
+        className: 'pharmacy-marker',
+        iconSize: [
+            BASE_MARKER_WIDTH * scale,
+            BASE_MARKER_HEIGHT * scale
+        ],
+        iconAnchor: [
+            (BASE_MARKER_WIDTH * scale) / 2,
+            BASE_MARKER_HEIGHT * scale
+        ],
+        popupAnchor: [0, -28 * scale],
+        html: ''
+    });
+}
+
+/* ================= PHARMACY MARKER ================= */
+function createPharmacyMarker(pharmacy) {
+
+    const marker = L.marker(
+        [pharmacy.latitude, pharmacy.longitude],
+        {
+            icon: createPharmacyIcon(1),
+            title: pharmacy.name
+        }
+    );
+
+    let popup =
+        `<div class="popup-title">${pharmacy.name}</div>` +
+        (pharmacy.address ? `<div class="popup-info">📍 ${pharmacy.address}</div>` : '') +
+        (pharmacy.phone ? `<div class="popup-info">📞 ${pharmacy.phone}</div>` : '') +
+        (pharmacy.openingHours ? `<div class="popup-info">🕐 ${pharmacy.openingHours}</div>` : '') +
+        (pharmacy.distance ? `<div class="popup-distance">📏 ${pharmacy.distance}</div>` : '');
+
+    marker.bindPopup(popup);
+    return marker;
+}
+
+/* ================= ADD PHARMACIES ================= */
+function addPharmacyMarkers(pharmacies) {
+    clearPharmacies();
+    if (!pharmacies || pharmacies.length === 0) return;
+
+    pharmacies.forEach(pharmacy => {
+
+        /* =====================
+           MAIN MARKER
+           ===================== */
+        const marker = createPharmacyMarker(pharmacy);
+
+        // CLICK → JavaFX side panel
+        marker.on("click", () => {
+
+            // Visual feedback
+            marker.setStyle({
+                radius: 9,
+                fillColor: "#ff5252",
+                color: "#b71c1c"
+            });
+
+            // Reset other markers
+            pharmacyMarkers.forEach(m => {
+                if (m !== marker && m.setStyle) {
+                    m.setStyle({
+                        radius: 6,
+                        fillColor: "#1e88e5",
+                        color: "#0d47a1"
+                    });
+                }
+            });
+
+            // Notify Java controller
+            if (window.java && window.java.onPharmacyClicked) {
+                window.java.onPharmacyClicked(pharmacy.id);
+            }
+        });
+
+        pharmacyMarkers.push(marker);
+        markersLayer.addLayer(marker);
+
+        /* =====================
+           PHARMACY FOOTPRINT
+           ===================== */
+        const area = L.circle(
+            [pharmacy.latitude, pharmacy.longitude],
+            {
+                radius: 18, // meters
+                color: "#D22B2B",
+                weight: 1,
+                fillColor: "#6E260E",
+                fillOpacity: 0.25,
+                interactive: false
+            }
+        );
+
+        area.__isPharmacyArea = true;
+        markersLayer.addLayer(area);
+    });
+
+    if (userMarker) userMarker.bringToFront();
+    fitBounds();
+}
+
+
+/* ================= SCALE MARKERS ================= */
+function scalePharmacyMarkers() {
+    if (!map) return;
+
+    const zoom = map.getZoom();
+
+    let scale = 1 + (zoom - 14) * 0.08;
+    scale = Math.max(0.6, Math.min(scale, 1.15));
+
+    if (Math.abs(scale - lastScale) < 0.05) return;
+    lastScale = scale;
+
+    pharmacyMarkers.forEach(marker => {
+        if (marker && marker.setIcon){
+            marker.setIcon(createPharmacyIcon(lastScale));
+        }
+    });
+}
+
+/* ================= AREA VISIBILITY ================= */
+function updatePharmacyAreas() {
+    if (!map || !markersLayer) return;
+
+    const zoom = map.getZoom();
+
+    markersLayer.eachLayer(layer => {
+        if (layer.__isPharmacyArea) {
+            layer.setStyle({
+                fillOpacity: zoom >= 15 ? 0.25 : 0,
+                opacity: zoom >= 15 ? 1 : 0
+            });
+        }
+    });
+}
+
+/* ================= BOUNDS ================= */
+function fitBounds() {
+    if (!markersLayer) return;
+
+    const bounds = markersLayer.getBounds();
+    if (bounds.isValid()) {
+        if (userMarker) bounds.extend(userMarker.getLatLng());
+        map.fitBounds(bounds, {
+            padding: [40, 40],
+            maxZoom: 16,
+            animate: false
+        });
+        setTimeout(safeInvalidate, 120);
+    }
+}
+
+/* ================= CLEAR ================= */
+function clearPharmacies() {
+    if (!markersLayer) return;
+    markersLayer.clearLayers();
+    pharmacyMarkers = [];
+}
+
+/* ================= ROUTE ================= */
+function drawRoute(lat1, lon1, lat2, lon2) {
+    clearRoute();
+
+    routeLine = L.polyline(
+        [[lat1, lon1], [lat2, lon2]],
+        {
+            color: '#1e88e5',
+            weight: 4,
+            dashArray: '8,6'
+        }
+    ).addTo(map);
+
+    map.fitBounds(routeLine.getBounds(), {
+        padding: [50, 50],
+        animate: false
+    });
+}
+
+function clearRoute() {
+    if (routeLine) {
+        map.removeLayer(routeLine);
+        routeLine = null;
+    }
+}
+
+/* ================= UTILS ================= */
+function centerMap(lat, lon, zoom) {
+    if (map) {
+        map.setView([lat, lon], zoom);
+    }
+}
+
+function refreshMap() {
+    safeInvalidate();
+}
+
+function highlightPharmacy(lat, lon) {
+    centerMap(lat, lon, 16);
+}
+
+/* ================= WINDOW FUNCTIONS ================= */
+window.ensureMap = function () {
+    return map;
+};
+
+window.invalidateMapSize = function () {
+    safeInvalidate();
+};
+
+window.addEventListener('resize', function () {
+    safeInvalidate();
+});
+
+console.log('✔ PharmaLocator Map Loaded — WebView Patch Applied — Glitch Fixed!');
+</script>
+</body>
+</html>
+

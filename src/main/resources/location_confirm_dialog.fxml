@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.text.*?>
+
+<VBox xmlns="http://javafx.com/javafx"
+      xmlns:fx="http://javafx.com/fxml"
+      spacing="20"
+      alignment="CENTER"
+      style="-fx-background-color: white; -fx-padding: 30;">
+
+    <!-- Title -->
+    <Label text="📍 Confirm Your Location" styleClass="dialog-title">
+        <font>
+            <Font name="System Bold" size="20"/>
+        </font>
+    </Label>
+
+    <!-- Detected Location Info -->
+    <VBox spacing="10" alignment="CENTER">
+        <Label text="We detected your location as:" style="-fx-font-size: 14px; -fx-text-fill: #666;"/>
+        
+        <!-- Address Display -->
+        <VBox spacing="5" alignment="CENTER" style="-fx-background-color: #f0f0f0; -fx-padding: 15; -fx-background-radius: 8;">
+            <Label fx:id="addressLabel" text="Loading address..." style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+            <Label fx:id="coordinatesLabel" text="Lat: 0.0000, Lon: 0.0000" style="-fx-font-size: 12px; -fx-text-fill: #888;"/>
+        </VBox>
+    </VBox>
+
+    <!-- Question -->
+    <Label text="Is this your correct location?" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+
+    <!-- Buttons -->
+    <HBox spacing="15" alignment="CENTER">
+        <Button fx:id="confirmButton" text="✓ Yes, This is Correct" 
+                style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 14px; -fx-padding: 10 20; -fx-background-radius: 5; -fx-cursor: hand;"
+                onMouseEntered="#onConfirmHover"
+                onMouseExited="#onConfirmExit"/>
+        
+        <Button fx:id="changeButton" text="✗ No, Let Me Choose" 
+                style="-fx-background-color: #FF9800; -fx-text-fill: white; -fx-font-size: 14px; -fx-padding: 10 20; -fx-background-radius: 5; -fx-cursor: hand;"
+                onMouseEntered="#onChangeHover"
+                onMouseExited="#onChangeExit"/>
+    </HBox>
+
+    <!-- Help Text -->
+    <Label text="If you choose 'No', you can click on the map to select your location" 
+           style="-fx-font-size: 11px; -fx-text-fill: #999; -fx-font-style: italic;"/>
+
+</VBox>
+

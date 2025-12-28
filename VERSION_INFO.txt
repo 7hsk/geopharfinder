@@ -1,0 +1,122 @@
+# ================================================================
+# PHARMALOCATOR - VERSION REQUIREMENTS
+# ================================================================
+# This file documents the exact versions used in this project
+# PRE_LAUNCH.bat will install these specific versions
+# ================================================================
+
+[CORE RUNTIME]
+Java JDK:       17.0.9 LTS (Eclipse Temurin / Adoptium)
+                - OpenJDK-based, free, enterprise-ready
+                - Download: https://adoptium.net/temurin/releases/?version=17
+                - Alternative: Any Java 17+ (Oracle JDK, Azul Zulu, etc.)
+
+Maven:          3.9.6
+                - Apache Maven build tool
+                - Download: https://maven.apache.org/download.cgi
+
+[DEPENDENCIES - Managed by Maven]
+The following are downloaded automatically by Maven during build:
+
+JavaFX:         21.0.2
+                - javafx-controls
+                - javafx-fxml
+                - javafx-web
+
+HTTP Client:    OkHttp 4.12.0
+JSON Parser:    Gson 2.10.1
+Database:       SQLite JDBC 3.45.1.0
+Logging:        SLF4J 2.0.9 + Logback 1.4.14
+Kotlin StdLib:  1.9.22 (required by SQLite)
+
+[COMPILER SETTINGS]
+Source Level:   Java 17
+Target Level:   Java 17
+Encoding:       UTF-8
+
+[WHY THESE VERSIONS?]
+
+1. Java 17.0.9 LTS:
+   - Long-Term Support (LTS) version
+   - Stable, well-tested, production-ready
+   - Eclipse Temurin is free, open-source, and widely used
+   - No licensing concerns (unlike Oracle JDK)
+   - Guaranteed updates until September 2029
+
+2. Maven 3.9.6:
+   - Latest stable version as of project creation
+   - Full Java 17 support
+   - Enhanced security features
+
+3. JavaFX 21.0.2:
+   - Modern UI framework
+   - Native WebView support for map rendering
+   - Cross-platform compatibility
+   - Active development and support
+
+[COMPATIBILITY NOTES]
+
+✅ WILL WORK:
+   - Any Java 17+ version (17.0.1 through 17.x.x)
+   - Java 18, 19, 20, 21 (higher versions)
+   - Maven 3.6.0 or higher
+   - Windows 10/11 (64-bit)
+
+⚠️ MAY HAVE ISSUES:
+   - Java 16 or lower (will NOT compile)
+   - Maven 3.5.x or lower (may have issues)
+   - 32-bit systems (JavaFX requires 64-bit)
+
+❌ WILL NOT WORK:
+   - Java 11, 8, or earlier versions
+   - Maven 2.x
+   - Windows 7/8 (JavaFX WebView limitations)
+
+[WHAT PRE_LAUNCH.BAT INSTALLS]
+
+If components are missing, PRE_LAUNCH.bat will:
+
+1. Java (if not found):
+   ➤ Downloads: Eclipse Temurin JDK 17.0.9 LTS
+   ➤ Size: ~170 MB
+   ➤ Installs to: C:\Program Files\Eclipse Adoptium\jdk-17.0.9+9\
+   ➤ Sets JAVA_HOME automatically
+   ➤ Adds to PATH automatically
+
+2. Maven (if not found):
+   ➤ Downloads: Apache Maven 3.9.6
+   ➤ Size: ~9 MB
+   ➤ Extracts to: V:\pharma\apache-maven-3.9.6\
+   ➤ Note: You need to add to PATH manually for permanent use
+
+3. JavaFX & Dependencies (always):
+   ➤ Downloaded by Maven during build
+   ➤ Cached in: %USERPROFILE%\.m2\repository\
+   ➤ Total size: ~100 MB (all dependencies)
+   ➤ Automatic, no user action needed
+
+[USER ENVIRONMENT MATCHING]
+
+For users to have THE EXACT SAME environment as you:
+
+1. They run: PRE_LAUNCH.bat
+2. Script installs: Java 17.0.9 LTS (specific version)
+3. Script installs: Maven 3.9.6 (specific version)
+4. Maven downloads: All dependencies from pom.xml (exact versions)
+5. Result: Identical environment, guaranteed compatibility
+
+[VERIFICATION]
+
+After running PRE_LAUNCH.bat, you should see:
+
+✓ Java:    17.0.9 (or higher 17.x.x)
+✓ Maven:   3.9.6 (or higher)
+✓ JavaFX:  21.0.2 (Managed by Maven)
+
+These versions are locked in pom.xml and PRE_LAUNCH.bat.
+
+================================================================
+Last Updated: December 27, 2025
+Project Version: 1.0.0
+================================================================
+
